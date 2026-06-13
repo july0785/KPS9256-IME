@@ -1,0 +1,32 @@
+# ── 빌드 산출물 ───────────────────────────────────────────
+/build/
+*.obj
+*.res
+*.exp
+*.lib
+*.pdb
+*.ipdb
+*.iobj
+*.ilk
+
+# ── 배포물 (저장소엔 안 올리고 GitHub Release 에 첨부) ──────
+/KPS9256-setup.exe
+/test/*.exe
+
+# 잠겨 있던 DLL 을 옆으로 치운 사본
+*_old_*.dll
+
+# ── Visual Studio 부스러기 ────────────────────────────────
+.vs/
+*.user
+*.aps
+*.suo
+
+# ── 미리보기 이미지 ───────────────────────────────────────
+/jo_*.png
+
+# 참고: jo.ico, *.rc, *.manifest, *.def, *.vcxproj, *.sln, *.bat,
+#       *.ps1, 소스(.h/.cpp) 는 모두 커밋한다.
+
+# 내부 작업지령서는 _local/ 에 보관(로컬 전용, 공개 안 함)
+/_local/
