@@ -46,7 +46,16 @@ static bool ExtractResource(WORD id, const std::wstring& path)
     DWORD  size = SizeofResource(nullptr, h);
     if (!data || !size) return false;
 
-    HANDLE f = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
+    // 대상이 이미 있고 로드되어 잠겨 있으면(재설치) 그대로는 못 덮어쓴다.
+    // 잠긴 DLL 도 이름 바꾸기는 되므로, 옆으로 치워 경로를 비운 뒤 새로 쓴다.
+    // 치운 옛 파일은 다음 재시작 때 정리되도록 예약한다.
+    if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        std::wstring aside = path + L".old" + std::to_wstring(GetTickCount64());
+        if (MoveFileExW(path.c_str(), aside.c_str(), MOVEFILE_REPLACE_EXISTING))
+            MoveFileExW(aside.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
+    }
+
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (f == INVALID_HANDLE_VALUE) return false;
     DWORD wrote = 0;

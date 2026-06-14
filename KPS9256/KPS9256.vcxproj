@@ -87,6 +87,7 @@
     <ClCompile Include="Hangul.cpp" />
     <ClCompile Include="TextService.cpp" />
     <ClCompile Include="KeyHandler.cpp" />
+    <ClCompile Include="LangBar.cpp" />
     <ClCompile Include="DisplayAttribute.cpp" />
     <ClCompile Include="Register.cpp" />
     <ClCompile Include="DllMain.cpp" />
@@ -104,6 +105,7 @@
   <ItemGroup>
     <None Include="KPS9256.def" />
     <None Include="jo.ico" />
+    <None Include="eng.ico" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

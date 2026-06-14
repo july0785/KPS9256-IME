@@ -9,6 +9,7 @@
 #include <new>
 
 class CEditSession;
+class CLangBarButton;
 
 // ─── 입력 처리기 본체 ────────────────────────────────────────────────────────
 class CKPS9256TextService :
@@ -62,6 +63,10 @@ public:
     void ApplyComposition(TfEditCookie ec, ITfContext* pic,
                           const std::wstring& commit, const std::wstring& preedit);
 
+    // 언어바 단추(한/영 토글)가 부른다
+    bool LbIsHangul() { return _IsHangulMode(); }
+    void LbToggle()   { _ToggleHangulMode(); }
+
 private:
     // 설치/해제
     BOOL _InitThreadMgrEventSink();
@@ -73,6 +78,9 @@ private:
     BOOL _InitDisplayAttributeGuid();
     BOOL _InitConversionCompartment();
     void _UninitConversionCompartment();
+    BOOL _InitLangBarButton();          // 한/영 토글 단추(작업표시줄)
+    void _UninitLangBarButton();
+    void _UpdateLangBarButton();        // 모드 바뀌면 아이콘/글자 갱신
 
     // 한/영 상태 — 절대 자체 카운터로 추적하지 않는다 (§5). 칸 값을 읽고 쓴다.
     bool _IsHangulMode();
@@ -82,11 +90,13 @@ private:
     void _HandleJamo(ITfContext* pic, wchar_t jamo);
     void _HandleBackspace(ITfContext* pic);
     void _FinalizeComposition(ITfContext* pic);            // 현 음절 확정
+    void _InjectReplace(const std::wstring& commit, const std::wstring& preedit); // CUAS 키주입
     void _RequestApply(ITfContext* pic,
                        const std::wstring& commit, const std::wstring& preedit);
 
     // 조합(편집세션 안에서만)
-    void _StartCompositionIfNeeded(TfEditCookie ec, ITfContext* pic);
+    //   글자를 먼저 넣고 그 위에 조합을 건다(CUAS 호환). 이미 조합중이면 글자만 갱신.
+    void _StartCompositionWithText(TfEditCookie ec, ITfContext* pic, const std::wstring& text);
     void _SetText(TfEditCookie ec, const std::wstring& text);
     void _ApplyDisplayAttribute(TfEditCookie ec, ITfContext* pic);
     void _ClearDisplayAttribute(TfEditCookie ec, ITfContext* pic, ITfRange* pRange);
@@ -105,10 +115,16 @@ private:
     ITfComposition* _pComposition;
     ITfContext*     _pCompositionContext;
 
+    // CUAS(실행창·탐색기 이름칸) 우회 — TSF 조합 대신 키 주입
+    bool         _cuasMode;     // 이 문맥은 조합이 매 글자 종료됨 → 키 주입 사용
+    std::wstring _cuasDoc;      // 문서에 들어가 있는 현재 미리편집 글자(다음에 지울 분량)
+    int          _pendingBack;  // 우리가 쏜(무시할) 합성 백스페이스 수
+
     ITfCompartment* _pConvMode;          // 변환모드 칸
     DWORD           _dwConvModeCookie;
 
     TfGuidAtom      _gaDisplayAttribute;
+    CLangBarButton* _pLangBarButton;     // 한/영 토글 단추
 
     HangulComposer  _composer;           // §4 입력핵
 };
@@ -167,4 +183,43 @@ public:
 private:
     LONG _cRef;
     ULONG _index; // 0 또는 1 (속성 하나뿐)
+};
+
+// ─── 한/영 토글 단추 (작업표시줄 입력 표시기) ────────────────────────────────
+//   GUID_LBI_INPUTMODE 입력모드 단추로 등록한다. 한글이면 《조》, 영문이면 《A》.
+//   누르면 변환모드 칸을 뒤집어 한/영을 전환한다.
+class CLangBarButton : public ITfLangBarItemButton, public ITfSource
+{
+public:
+    CLangBarButton(CKPS9256TextService* tip);
+    ~CLangBarButton();
+
+    // IUnknown
+    STDMETHODIMP          QueryInterface(REFIID riid, void** ppv) override;
+    STDMETHODIMP_(ULONG)  AddRef() override;
+    STDMETHODIMP_(ULONG)  Release() override;
+
+    // ITfLangBarItem
+    STDMETHODIMP GetInfo(TF_LANGBARITEMINFO* pInfo) override;
+    STDMETHODIMP GetStatus(DWORD* pdwStatus) override;
+    STDMETHODIMP Show(BOOL fShow) override;
+    STDMETHODIMP GetTooltipString(BSTR* pbstrToolTip) override;
+
+    // ITfLangBarItemButton
+    STDMETHODIMP OnClick(TfLBIClick click, POINT pt, const RECT* prcArea) override;
+    STDMETHODIMP InitMenu(ITfMenu* pMenu) override;
+    STDMETHODIMP OnMenuSelect(UINT wID) override;
+    STDMETHODIMP GetIcon(HICON* phIcon) override;
+    STDMETHODIMP GetText(BSTR* pbstrText) override;
+
+    // ITfSource
+    STDMETHODIMP AdviseSink(REFIID riid, IUnknown* punk, DWORD* pdwCookie) override;
+    STDMETHODIMP UnadviseSink(DWORD dwCookie) override;
+
+    void NotifyUpdate();                 // 모드 바뀜 → 언어바에 갱신 통지
+
+private:
+    LONG                 _cRef;
+    CKPS9256TextService* _pTip;          // 약한 참조(소유자가 살아있는 동안만 사용)
+    ITfLangBarItemSink*  _pSink;
 };

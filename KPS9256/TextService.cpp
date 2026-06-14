@@ -4,7 +4,9 @@
 CKPS9256TextService::CKPS9256TextService()
     : _cRef(1), _pThreadMgr(nullptr), _tfClientId(TF_CLIENTID_NULL), _dwActivateFlags(0),
       _dwThreadMgrCookie(TF_INVALID_COOKIE), _pComposition(nullptr), _pCompositionContext(nullptr),
-      _pConvMode(nullptr), _dwConvModeCookie(TF_INVALID_COOKIE), _gaDisplayAttribute(TF_INVALID_GUIDATOM)
+      _cuasMode(false), _pendingBack(0),
+      _pConvMode(nullptr), _dwConvModeCookie(TF_INVALID_COOKIE), _gaDisplayAttribute(TF_INVALID_GUIDATOM),
+      _pLangBarButton(nullptr)
 {
     DllAddRef();
 }
@@ -65,6 +67,7 @@ STDMETHODIMP CKPS9256TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid,
     _InitPreservedKeys();
     _InitDisplayAttributeGuid();
     _InitConversionCompartment();
+    _InitLangBarButton();              // 한/영 토글 단추(작업표시줄)
     return S_OK;
 }
 
@@ -74,6 +77,7 @@ STDMETHODIMP CKPS9256TextService::Deactivate()
     if (_pComposition && _pCompositionContext)
         _FinalizeComposition(_pCompositionContext);
 
+    _UninitLangBarButton();
     _UninitConversionCompartment();
     _UninitPreservedKeys();
     _UninitKeyEventSink();
@@ -177,6 +181,28 @@ BOOL CKPS9256TextService::_InitDisplayAttributeGuid()
     return SUCCEEDED(hr);
 }
 
+// ─── 한/영 상태 저장(레지스트리) — 앱을 새로 열어도 마지막 상태를 기억 ────────
+static LONG _ReadSavedConvMode()
+{
+    DWORD val = 0, sz = sizeof(val);
+    HKEY k = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\KPS9256", 0, KEY_READ, &k) == ERROR_SUCCESS) {
+        RegQueryValueExW(k, L"ConvMode", nullptr, nullptr, (LPBYTE)&val, &sz);
+        RegCloseKey(k);
+    }
+    return (LONG)val;
+}
+static void _WriteSavedConvMode(LONG mode)
+{
+    HKEY k = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\KPS9256", 0, nullptr, 0,
+                        KEY_WRITE, nullptr, &k, nullptr) == ERROR_SUCCESS) {
+        DWORD v = (DWORD)mode;
+        RegSetValueExW(k, L"ConvMode", 0, REG_DWORD, (const BYTE*)&v, sizeof(v));
+        RegCloseKey(k);
+    }
+}
+
 // ─── 변환모드 칸 (한/영 상태) ────────────────────────────────────────────────
 BOOL CKPS9256TextService::_InitConversionCompartment()
 {
@@ -187,13 +213,9 @@ BOOL CKPS9256TextService::_InitConversionCompartment()
     pCompMgr->Release();
     if (!_pConvMode) return FALSE;
 
-    // 초기값: 미설정이면 영문(0)으로. (이미 값이 있으면 건드리지 않는다.)
-    VARIANT v; VariantInit(&v);
-    if (!(SUCCEEDED(_pConvMode->GetValue(&v)) && v.vt == VT_I4)) {
-        VARIANT z; z.vt = VT_I4; z.lVal = 0;
-        _pConvMode->SetValue(_tfClientId, &z);
-    }
-    VariantClear(&v);
+    // 저장해 둔 한/영 상태를 복원한다 — 새 앱도 마지막 상태를 기억(MS 입력기와 동일).
+    VARIANT z; z.vt = VT_I4; z.lVal = _ReadSavedConvMode();
+    _pConvMode->SetValue(_tfClientId, &z);
 
     // 변경 싱크
     ITfSource* pSource = nullptr;
@@ -248,6 +270,11 @@ STDMETHODIMP CKPS9256TextService::OnSetFocus(ITfDocumentMgr* /*pdimFocus*/, ITfD
     // 초점이 바뀌면 조합중 음절을 확정 (§5).
     if (_pComposition && _pCompositionContext)
         _FinalizeComposition(_pCompositionContext);
+    // 다른 칸으로 옮기면 CUAS 우회 상태를 비운다(새 칸에서 다시 판단).
+    _composer.Reset();
+    _cuasMode = false;
+    _cuasDoc.clear();
+    _pendingBack = 0;
     return S_OK;
 }
 
@@ -269,6 +296,15 @@ STDMETHODIMP CKPS9256TextService::OnChange(REFGUID rguid)
                 pDim->Release();
             }
         }
+        _UpdateLangBarButton();          // 단추 아이콘/글자(조↔A) 갱신
+
+        // 바뀐 한/영 상태를 저장 → 다음에 여는 앱이 이 상태로 시작.
+        if (_pConvMode) {
+            VARIANT v; VariantInit(&v);
+            if (SUCCEEDED(_pConvMode->GetValue(&v)) && v.vt == VT_I4)
+                _WriteSavedConvMode(v.lVal);
+            VariantClear(&v);
+        }
     }
     return S_OK;
 }
@@ -276,10 +312,19 @@ STDMETHODIMP CKPS9256TextService::OnChange(REFGUID rguid)
 // ─── ITfCompositionSink ──────────────────────────────────────────────────────
 STDMETHODIMP CKPS9256TextService::OnCompositionTerminated(TfEditCookie /*ec*/, ITfComposition* /*pComposition*/)
 {
-    // TSF 가 우리 조합을 강제 종료(초점/내용 변화 등). 상태만 정리.
-    _composer.Reset();
     if (_pComposition)        { _pComposition->Release();        _pComposition = nullptr; }
     if (_pCompositionContext) { _pCompositionContext->Release(); _pCompositionContext = nullptr; }
+
+    // 조합 중인데 강제 종료됐다 = CUAS(실행창/탐색기 이름칸)가 매 글자 확정한 것.
+    //   이후로는 TSF 조합 대신 키 주입으로 처리하도록 표시하고, 자모 상태는 유지한다.
+    if (_composer.IsComposing()) {
+        _cuasMode = true;
+        _cuasDoc  = _composer.Preedit();   // 방금 CUAS 가 확정해 문서에 남긴 글자
+    } else {
+        _composer.Reset();
+        _cuasMode = false;
+        _cuasDoc.clear();
+    }
     return S_OK;
 }
 

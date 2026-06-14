@@ -1,6 +1,7 @@
 // KeyHandler.cpp — ITfKeyEventSink + 조합 편집세션 (§5 키 처리 흐름)
 #include "KPS9256.h"
 #include "KeyMap.h"
+#include <vector>
 
 // ─── 보조 ────────────────────────────────────────────────────────────────────
 static inline bool ShiftDown()   { return (GetKeyState(VK_SHIFT)   & 0x8000) != 0; }
@@ -46,6 +47,8 @@ STDMETHODIMP CKPS9256TextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wPar
     if (pfEaten) *pfEaten = FALSE;
     if (!pfEaten) return S_OK;
 
+    if ((UINT)wParam == VK_PACKET) return S_OK;                    // 유니코드 주입 — 통과
+    if (_pendingBack > 0 && (UINT)wParam == VK_BACK) return S_OK;  // 우리가 쏜 백스페이스 — 통과
     if (!_IsHangulMode()) return S_OK;        // 영문모드: 전부 통과
     if (CtrlDown() || AltDown()) return S_OK; // 단축키는 통과(확정 안 함)
 
@@ -67,6 +70,8 @@ STDMETHODIMP CKPS9256TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPAR
     if (pfEaten) *pfEaten = FALSE;
     if (!pfEaten) return S_OK;
 
+    if ((UINT)wParam == VK_PACKET) return S_OK;  // 유니코드 주입 — 통과(먹지 않음)
+    if (_pendingBack > 0 && (UINT)wParam == VK_BACK) { _pendingBack--; return S_OK; } // 합성 백스페이스: 세고 통과
     if (!_IsHangulMode()) return S_OK;
     if (CtrlDown() || AltDown()) return S_OK;
 
@@ -97,22 +102,64 @@ STDMETHODIMP CKPS9256TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPAR
     return S_OK;
 }
 
+// ─── CUAS 키 주입 (백스페이스로 지우고 유니코드로 넣기) ──────────────────────
+static void SendBackspaces(int n)
+{
+    if (n <= 0) return;
+    std::vector<INPUT> in;
+    for (int i = 0; i < n; ++i) {
+        INPUT d = {}; d.type = INPUT_KEYBOARD; d.ki.wVk = VK_BACK;
+        INPUT u = {}; u.type = INPUT_KEYBOARD; u.ki.wVk = VK_BACK; u.ki.dwFlags = KEYEVENTF_KEYUP;
+        in.push_back(d); in.push_back(u);
+    }
+    SendInput((UINT)in.size(), in.data(), sizeof(INPUT));
+}
+static void SendUnicode(const std::wstring& s)
+{
+    if (s.empty()) return;
+    std::vector<INPUT> in;
+    for (wchar_t c : s) {
+        INPUT d = {}; d.type = INPUT_KEYBOARD; d.ki.wScan = c; d.ki.dwFlags = KEYEVENTF_UNICODE;
+        INPUT u = {}; u.type = INPUT_KEYBOARD; u.ki.wScan = c; u.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+        in.push_back(d); in.push_back(u);
+    }
+    SendInput((UINT)in.size(), in.data(), sizeof(INPUT));
+}
+
+// 문서에 남아 있는 직전 미리편집(_cuasDoc)을 지우고 commit+preedit 를 넣는다.
+void CKPS9256TextService::_InjectReplace(const std::wstring& commit, const std::wstring& preedit)
+{
+    int back = (int)_cuasDoc.length();
+    _pendingBack += back;                  // 우리가 쏘는 백스페이스는 무시하도록 표시
+    SendBackspaces(back);
+    SendUnicode(commit + preedit);
+    _cuasDoc = preedit;                    // commit 분은 영구, preedit 분만 다음에 교체
+}
+
 // ─── 처리 본체 ───────────────────────────────────────────────────────────────
 void CKPS9256TextService::_HandleJamo(ITfContext* pic, wchar_t jamo)
 {
     std::wstring commit;
     _composer.Input(jamo, commit);
-    _RequestApply(pic, commit, _composer.Preedit());
+    if (_cuasMode) _InjectReplace(commit, _composer.Preedit());
+    else           _RequestApply(pic, commit, _composer.Preedit());
 }
 
 void CKPS9256TextService::_HandleBackspace(ITfContext* pic)
 {
     _composer.Backspace();
-    _RequestApply(pic, std::wstring(), _composer.Preedit());
+    if (_cuasMode) _InjectReplace(std::wstring(), _composer.Preedit());
+    else           _RequestApply(pic, std::wstring(), _composer.Preedit());
 }
 
 void CKPS9256TextService::_FinalizeComposition(ITfContext* pic)
 {
+    if (_cuasMode) {
+        // 미리편집 글자는 이미 보통글자로 문서에 들어가 있다. 상태만 정리.
+        std::wstring c; _composer.Flush(c);
+        _cuasDoc.clear();
+        return;
+    }
     if (!pic) return;
     std::wstring commit;
     _composer.Flush(commit);
@@ -145,37 +192,35 @@ void CKPS9256TextService::ApplyComposition(TfEditCookie ec, ITfContext* pic,
                                            const std::wstring& commit, const std::wstring& preedit)
 {
     if (!commit.empty()) {
-        _StartCompositionIfNeeded(ec, pic);
-        _SetText(ec, commit);
-        _MoveCaretToEnd(ec, pic);            // ★ 확정 글자 뒤로 캐럿 이동.
-                                             //   안 그러면 다음 조합이 직전 글자를 덮어쓴다.
+        _StartCompositionWithText(ec, pic, commit);  // 시작(글자 먼저) 또는 갱신
+        _MoveCaretToEnd(ec, pic);            // 확정 글자 뒤로 캐럿 이동(다음 조합이 안 덮게)
         _EndComposition(ec, pic);            // 확정 → 보통글자로 남고 조합 종료
     }
 
     if (!preedit.empty()) {
-        _StartCompositionIfNeeded(ec, pic);
-        _SetText(ec, preedit);
+        _StartCompositionWithText(ec, pic, preedit);
         _ApplyDisplayAttribute(ec, pic);     // 밑줄
-        _MoveCaretToEnd(ec, pic);
-    } else {
+    } else if (_pComposition) {
         // 조합 글자가 없으면(예: 물림으로 비워짐) 남은 조합을 지우고 종료.
-        if (_pComposition) {
-            _SetText(ec, std::wstring());
-            _EndComposition(ec, pic);
-        }
+        _SetText(ec, std::wstring());
+        _EndComposition(ec, pic);
     }
 }
 
-void CKPS9256TextService::_StartCompositionIfNeeded(TfEditCookie ec, ITfContext* pic)
+void CKPS9256TextService::_StartCompositionWithText(TfEditCookie ec, ITfContext* pic,
+                                                    const std::wstring& text)
 {
-    if (_pComposition) return;
+    if (_pComposition) { _SetText(ec, text); return; }   // 이미 조합중이면 글자만 갱신
 
     ITfInsertAtSelection* pIns = nullptr;
     if (FAILED(pic->QueryInterface(IID_ITfInsertAtSelection, (void**)&pIns)) || !pIns)
         return;
 
+    // 빈 범위가 아니라 실제 글자를 넣고 그 위에 조합을 건다.
+    //   CUAS(탐색기 이름칸·실행창 등 옛 편집칸)는 빈 범위 조합을 유지하지 못해
+    //   자모가 분리된다. 글자를 먼저 넣으면 조합이 제대로 걸린다.
     ITfRange* pRange = nullptr;
-    HRESULT hr = pIns->InsertTextAtSelection(ec, TF_IAS_QUERYONLY, nullptr, 0, &pRange);
+    HRESULT hr = pIns->InsertTextAtSelection(ec, 0, text.c_str(), (LONG)text.length(), &pRange);
     pIns->Release();
     if (FAILED(hr) || !pRange) return;
 

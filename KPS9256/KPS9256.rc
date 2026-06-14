@@ -1,4 +1,5 @@
 #include "resource.h"
 
-// 자판 표시기(배지) 아이콘 — 《조》. 등록 때 프로파일 아이콘으로 쓴다.
-IDI_MODE  ICON  "jo.ico"
+// 자판 표시기(배지) 아이콘. IDI_MODE(조) 가 첫 아이콘 → 프로파일 아이콘으로 쓰인다.
+IDI_MODE      ICON  "jo.ico"
+IDI_MODE_ENG  ICON  "eng.ico"
