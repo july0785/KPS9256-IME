@@ -9,8 +9,8 @@
 *.iobj
 *.ilk
 
-# ── 배포물 (저장소엔 안 올리고 GitHub Release 에 첨부) ──────
-/KPS9256-setup.exe
+# 설치기(KPS9256-setup.exe)는 일부러 저장소에 함께 올린다 — 받는 사람이 바로 받게.
+#   (DLL 내장·정적 CRT 라 빌드/런타임 없이 실행됨)
 /test/*.exe
 
 # 잠겨 있던 DLL 을 옆으로 치운 사본
