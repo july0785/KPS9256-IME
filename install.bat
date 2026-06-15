@@ -21,9 +21,16 @@ set "X64=%~dp0build\x64\Release\KPS9256_x64.dll"
 set "X86=%~dp0build\Win32\Release\KPS9256_x86.dll"
 
 if not exist "%X64%" (
-    echo [ERROR] x64 DLL not found:
+    echo [ERROR] Built DLL not found:
     echo         "%X64%"
-    echo         Build it first ^(see README.md^).
+    echo.
+    echo   This script registers DLLs that you BUILT yourself, so it only
+    echo   works on a machine where the project was compiled.
+    echo.
+    echo   ^>^> To just install the IME, run  KPS9256-setup.exe  instead.
+    echo      ^(It has the DLLs built in - no Visual Studio needed.^)
+    echo.
+    echo   Developers: build KPS9256.sln in Release x64/x86 first ^(see README.md^).
     pause
     exit /b 1
 )
