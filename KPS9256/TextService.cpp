@@ -146,7 +146,8 @@ BOOL CKPS9256TextService::_InitPreservedKeys()
         return FALSE;
 
     // VK_HANGUL(0x15): 조선/한국 자판 드라이버가 한/영(오른쪽 Alt)키에서 보낸다.
-    TF_PRESERVEDKEY pkHangul = { VK_HANGUL, 0 };
+    //   TF_MOD_IGNORE_ALL_MODIFIER: Shift/Ctrl 등을 같이 눌러도 토글되게(수식키 무시).
+    TF_PRESERVEDKEY pkHangul = { VK_HANGUL, TF_MOD_IGNORE_ALL_MODIFIER };
     pKsm->PreserveKey(_tfClientId, c_guidPreservedHangul, &pkHangul, nullptr, 0);
 
     // Shift+Space 도 토글.
@@ -161,7 +162,7 @@ void CKPS9256TextService::_UninitPreservedKeys()
 {
     ITfKeystrokeMgr* pKsm = nullptr;
     if (SUCCEEDED(_pThreadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKsm)) && pKsm) {
-        TF_PRESERVEDKEY pkHangul = { VK_HANGUL, 0 };
+        TF_PRESERVEDKEY pkHangul = { VK_HANGUL, TF_MOD_IGNORE_ALL_MODIFIER };
         pKsm->UnpreserveKey(c_guidPreservedHangul, &pkHangul);
         TF_PRESERVEDKEY pkShiftSpace = { VK_SPACE, TF_MOD_SHIFT };
         pKsm->UnpreserveKey(c_guidPreservedShiftSpc, &pkShiftSpace);

@@ -15,7 +15,8 @@ $out  = Join-Path $root "KPS9256-setup.exe"
 Remove-Item $out -ErrorAction SilentlyContinue
 
 # 임시 .bat 를 거치지 않고(한글 경로가 ASCII 로 깨지는 것을 피함) cmd 로 바로 넘긴다.
-$cl = "cl /nologo /utf-8 /O2 /EHsc /DUNICODE /D_UNICODE Installer.cpp Installer.res " +
+# /MT = 정적 CRT(런타임 자체 포함) → VC++ 재배포 없는 깨끗한 PC 에서도 실행됨.
+$cl = "cl /nologo /utf-8 /O2 /MT /EHsc /DUNICODE /D_UNICODE Installer.cpp Installer.res " +
       "/Fe:`"$out`" /link /MANIFEST:NO /SUBSYSTEM:WINDOWS " +
       "shell32.lib ole32.lib advapi32.lib user32.lib"
 $cmd = "call `"$vcvars`" >nul 2>&1 && cd /d `"$inst`" && " +
