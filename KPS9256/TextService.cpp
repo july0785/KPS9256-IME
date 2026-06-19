@@ -4,7 +4,7 @@
 CKPS9256TextService::CKPS9256TextService()
     : _cRef(1), _pThreadMgr(nullptr), _tfClientId(TF_CLIENTID_NULL), _dwActivateFlags(0),
       _dwThreadMgrCookie(TF_INVALID_COOKIE), _pComposition(nullptr), _pCompositionContext(nullptr),
-      _cuasMode(false), _pendingBack(0),
+      _cuasMode(false), _pendingBack(0), _cuasConfirm(0),
       _pConvMode(nullptr), _dwConvModeCookie(TF_INVALID_COOKIE), _gaDisplayAttribute(TF_INVALID_GUIDATOM),
       _pLangBarButton(nullptr)
 {
@@ -276,6 +276,7 @@ STDMETHODIMP CKPS9256TextService::OnSetFocus(ITfDocumentMgr* /*pdimFocus*/, ITfD
     _cuasMode = false;
     _cuasDoc.clear();
     _pendingBack = 0;
+    _cuasConfirm = 0;
     return S_OK;
 }
 
@@ -316,15 +317,19 @@ STDMETHODIMP CKPS9256TextService::OnCompositionTerminated(TfEditCookie /*ec*/, I
     if (_pComposition)        { _pComposition->Release();        _pComposition = nullptr; }
     if (_pCompositionContext) { _pCompositionContext->Release(); _pCompositionContext = nullptr; }
 
-    // 조합 중인데 강제 종료됐다 = CUAS(실행창/탐색기 이름칸)가 매 글자 확정한 것.
-    //   이후로는 TSF 조합 대신 키 주입으로 처리하도록 표시하고, 자모 상태는 유지한다.
+    // 조합 중인데 강제 종료됐다 = CUAS(실행창/탐색기 이름칸)가 매 글자 확정한 것일 수 있다.
+    //   하지만 정상 앱도 초점/클릭 등으로 종료가 한 번 올 수 있으므로, 그걸 CUAS 로
+    //   오인하면 안 된다(키 주입이 정상 앱에 새어들어가 스페이스/엔터/지우기가 깨진다).
+    //   → "연속 2번" 종료됐을 때만 CUAS 로 확정한다. 조합이 한 번이라도 살아남으면
+    //     ApplyComposition 에서 _cuasConfirm 이 0 으로 초기화된다(정상 앱).
     if (_composer.IsComposing()) {
-        _cuasMode = true;
-        _cuasDoc  = _composer.Preedit();   // 방금 CUAS 가 확정해 문서에 남긴 글자
+        if (++_cuasConfirm >= 2) _cuasMode = true;
+        _cuasDoc = _composer.Preedit();    // CUAS 면 문서에 남은 글자(주입 교체용)
     } else {
         _composer.Reset();
         _cuasMode = false;
         _cuasDoc.clear();
+        _cuasConfirm = 0;
     }
     return S_OK;
 }

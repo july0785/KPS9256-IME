@@ -158,6 +158,7 @@ void CKPS9256TextService::_FinalizeComposition(ITfContext* pic)
         // 미리편집 글자는 이미 보통글자로 문서에 들어가 있다. 상태만 정리.
         std::wstring c; _composer.Flush(c);
         _cuasDoc.clear();
+        _pendingBack = 0;
         return;
     }
     if (!pic) return;
@@ -191,6 +192,9 @@ void CKPS9256TextService::_RequestApply(ITfContext* pic,
 void CKPS9256TextService::ApplyComposition(TfEditCookie ec, ITfContext* pic,
                                            const std::wstring& commit, const std::wstring& preedit)
 {
+    // 직전 조합이 살아남아 여기 왔다 = 정상 앱(TSF 동작) → CUAS 오인 카운터 초기화.
+    if (_pComposition) _cuasConfirm = 0;
+
     if (!commit.empty()) {
         _StartCompositionWithText(ec, pic, commit);  // 시작(글자 먼저) 또는 갱신
         _MoveCaretToEnd(ec, pic);            // 확정 글자 뒤로 캐럿 이동(다음 조합이 안 덮게)
