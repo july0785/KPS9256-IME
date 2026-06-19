@@ -4,7 +4,7 @@
 CKPS9256TextService::CKPS9256TextService()
     : _cRef(1), _pThreadMgr(nullptr), _tfClientId(TF_CLIENTID_NULL), _dwActivateFlags(0),
       _dwThreadMgrCookie(TF_INVALID_COOKIE), _pComposition(nullptr), _pCompositionContext(nullptr),
-      _cuasMode(false), _pendingBack(0),
+      _cuasMode(false),
       _pConvMode(nullptr), _dwConvModeCookie(TF_INVALID_COOKIE), _gaDisplayAttribute(TF_INVALID_GUIDATOM),
       _pLangBarButton(nullptr)
 {
@@ -275,7 +275,6 @@ STDMETHODIMP CKPS9256TextService::OnSetFocus(ITfDocumentMgr* /*pdimFocus*/, ITfD
     _composer.Reset();
     _cuasMode = false;
     _cuasDoc.clear();
-    _pendingBack = 0;
     return S_OK;
 }
 

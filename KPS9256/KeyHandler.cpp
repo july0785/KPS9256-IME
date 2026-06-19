@@ -8,6 +8,22 @@ static inline bool ShiftDown()   { return (GetKeyState(VK_SHIFT)   & 0x8000) != 
 static inline bool CtrlDown()    { return (GetKeyState(VK_CONTROL) & 0x8000) != 0; }
 static inline bool AltDown()     { return (GetKeyState(VK_MENU)    & 0x8000) != 0; }
 
+// 우리가 SendInput 으로 쏜 키에 붙이는 표식. GetMessageExtraInfo 로 되읽어 우리 것을
+//   확실히 가려낸다(카운터 방식의 어긋남 없음).
+static const ULONG_PTR kInjectMagic = 0x4B505339; // "KPS9"
+static inline bool IsInjectedKey() { return (ULONG_PTR)GetMessageExtraInfo() == kInjectMagic; }
+
+// 현재 문맥이 글자를 받을 수 있나(편집 가능). 캔버스·읽기전용 등이면 false →
+//   자모 키를 먹지 않고 통과시켜 응용 단축키(포토샵 B/V 등)가 동작하게 한다.
+static bool CanEditContext(ITfContext* pic)
+{
+    if (!pic) return false;
+    TF_STATUS st = {};
+    if (FAILED(pic->GetStatus(&st))) return false;     // 상태 못 얻음 = 편집 불가로 봄
+    if (st.dwDynamicFlags & TF_SD_READONLY) return false;
+    return true;
+}
+
 bool CKPS9256TextService::_IsModifierVK(UINT vk)
 {
     switch (vk) {
@@ -42,18 +58,21 @@ STDMETHODIMP CKPS9256TextService::OnPreservedKey(ITfContext* /*pic*/, REFGUID rg
 }
 
 // ─── OnTestKeyDown: 이 키를 먹을지 예고 ──────────────────────────────────────
-STDMETHODIMP CKPS9256TextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/, BOOL* pfEaten)
+STDMETHODIMP CKPS9256TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/, BOOL* pfEaten)
 {
     if (pfEaten) *pfEaten = FALSE;
     if (!pfEaten) return S_OK;
 
-    if ((UINT)wParam == VK_PACKET) return S_OK;                    // 유니코드 주입 — 통과
-    if (_pendingBack > 0 && (UINT)wParam == VK_BACK) return S_OK;  // 우리가 쏜 백스페이스 — 통과
+    if (IsInjectedKey()) return S_OK;          // 우리가 쏜 키(백스페이스/유니코드) — 통과
+    if ((UINT)wParam == VK_PACKET) return S_OK;
     if (!_IsHangulMode()) return S_OK;        // 영문모드: 전부 통과
     if (CtrlDown() || AltDown()) return S_OK; // 단축키는 통과(확정 안 함)
 
     UINT vk = (UINT)wParam;
-    if (KpsMapKey(vk, ShiftDown()) != 0) { *pfEaten = TRUE; return S_OK; } // 자모 키
+    if (KpsMapKey(vk, ShiftDown()) != 0) {    // 자모 키
+        if (!CanEditContext(pic)) return S_OK; // 편집 불가 문맥(캔버스 등) → 단축키로 통과
+        *pfEaten = TRUE; return S_OK;
+    }
 
     if (!_composer.IsComposing()) return S_OK; // 조합 안 함 + 비자모 → 통과
     if (_IsModifierVK(vk)) return S_OK;        // 순수 수식키는 무시
@@ -70,8 +89,8 @@ STDMETHODIMP CKPS9256TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPAR
     if (pfEaten) *pfEaten = FALSE;
     if (!pfEaten) return S_OK;
 
-    if ((UINT)wParam == VK_PACKET) return S_OK;  // 유니코드 주입 — 통과(먹지 않음)
-    if (_pendingBack > 0 && (UINT)wParam == VK_BACK) { _pendingBack--; return S_OK; } // 합성 백스페이스: 세고 통과
+    if (IsInjectedKey()) return S_OK;            // 우리가 쏜 키(백스페이스/유니코드) — 통과
+    if ((UINT)wParam == VK_PACKET) return S_OK;
     if (!_IsHangulMode()) return S_OK;
     if (CtrlDown() || AltDown()) return S_OK;
 
@@ -80,6 +99,7 @@ STDMETHODIMP CKPS9256TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPAR
     // 자모 키: 자동기에 넣는다.
     wchar_t jamo = KpsMapKey(vk, ShiftDown());
     if (jamo != 0) {
+        if (!CanEditContext(pic)) return S_OK;   // 편집 불가 문맥(캔버스 등) → 단축키로 통과
         _HandleJamo(pic, jamo);
         *pfEaten = TRUE;
         return S_OK;
@@ -108,8 +128,8 @@ static void SendBackspaces(int n)
     if (n <= 0) return;
     std::vector<INPUT> in;
     for (int i = 0; i < n; ++i) {
-        INPUT d = {}; d.type = INPUT_KEYBOARD; d.ki.wVk = VK_BACK;
-        INPUT u = {}; u.type = INPUT_KEYBOARD; u.ki.wVk = VK_BACK; u.ki.dwFlags = KEYEVENTF_KEYUP;
+        INPUT d = {}; d.type = INPUT_KEYBOARD; d.ki.wVk = VK_BACK; d.ki.dwExtraInfo = kInjectMagic;
+        INPUT u = {}; u.type = INPUT_KEYBOARD; u.ki.wVk = VK_BACK; u.ki.dwFlags = KEYEVENTF_KEYUP; u.ki.dwExtraInfo = kInjectMagic;
         in.push_back(d); in.push_back(u);
     }
     SendInput((UINT)in.size(), in.data(), sizeof(INPUT));
@@ -119,8 +139,8 @@ static void SendUnicode(const std::wstring& s)
     if (s.empty()) return;
     std::vector<INPUT> in;
     for (wchar_t c : s) {
-        INPUT d = {}; d.type = INPUT_KEYBOARD; d.ki.wScan = c; d.ki.dwFlags = KEYEVENTF_UNICODE;
-        INPUT u = {}; u.type = INPUT_KEYBOARD; u.ki.wScan = c; u.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+        INPUT d = {}; d.type = INPUT_KEYBOARD; d.ki.wScan = c; d.ki.dwFlags = KEYEVENTF_UNICODE; d.ki.dwExtraInfo = kInjectMagic;
+        INPUT u = {}; u.type = INPUT_KEYBOARD; u.ki.wScan = c; u.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP; u.ki.dwExtraInfo = kInjectMagic;
         in.push_back(d); in.push_back(u);
     }
     SendInput((UINT)in.size(), in.data(), sizeof(INPUT));
@@ -130,8 +150,7 @@ static void SendUnicode(const std::wstring& s)
 void CKPS9256TextService::_InjectReplace(const std::wstring& commit, const std::wstring& preedit)
 {
     int back = (int)_cuasDoc.length();
-    _pendingBack += back;                  // 우리가 쏘는 백스페이스는 무시하도록 표시
-    SendBackspaces(back);
+    SendBackspaces(back);                  // 표식(dwExtraInfo) 붙어 나가 → 우리 키로 식별
     SendUnicode(commit + preedit);
     _cuasDoc = preedit;                    // commit 분은 영구, preedit 분만 다음에 교체
 }
