@@ -63,8 +63,9 @@ STDMETHODIMP CKPS9256TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, 
     if (pfEaten) *pfEaten = FALSE;
     if (!pfEaten) return S_OK;
 
-    if (IsInjectedKey()) return S_OK;          // 우리가 쏜 키(백스페이스/유니코드) — 통과
+    if (IsInjectedKey()) return S_OK;          // (표식 통하면) 우리가 쏜 키 — 통과
     if ((UINT)wParam == VK_PACKET) return S_OK;
+    if (_pendingBack > 0 && (UINT)wParam == VK_BACK) return S_OK; // 우리가 쏜 백스페이스 — 통과(카운터)
     if (!_IsHangulMode()) return S_OK;        // 영문모드: 전부 통과
     if (CtrlDown() || AltDown()) return S_OK; // 단축키는 통과(확정 안 함)
 
@@ -89,8 +90,9 @@ STDMETHODIMP CKPS9256TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPAR
     if (pfEaten) *pfEaten = FALSE;
     if (!pfEaten) return S_OK;
 
-    if (IsInjectedKey()) return S_OK;            // 우리가 쏜 키(백스페이스/유니코드) — 통과
+    if (IsInjectedKey()) return S_OK;            // (표식 통하면) 우리가 쏜 키 — 통과
     if ((UINT)wParam == VK_PACKET) return S_OK;
+    if (_pendingBack > 0 && (UINT)wParam == VK_BACK) { _pendingBack--; return S_OK; } // 합성 백스페이스: 세고 통과
     if (!_IsHangulMode()) return S_OK;
     if (CtrlDown() || AltDown()) return S_OK;
 
@@ -150,7 +152,8 @@ static void SendUnicode(const std::wstring& s)
 void CKPS9256TextService::_InjectReplace(const std::wstring& commit, const std::wstring& preedit)
 {
     int back = (int)_cuasDoc.length();
-    SendBackspaces(back);                  // 표식(dwExtraInfo) 붙어 나가 → 우리 키로 식별
+    _pendingBack += back;                  // 카운터로 우리 백스페이스 식별(표식도 함께 검사)
+    SendBackspaces(back);                  // 표식(dwExtraInfo)도 붙여 보낸다
     SendUnicode(commit + preedit);
     _cuasDoc = preedit;                    // commit 분은 영구, preedit 분만 다음에 교체
 }

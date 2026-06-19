@@ -118,6 +118,7 @@ private:
     // CUAS(실행창·탐색기 이름칸) 우회 — TSF 조합 대신 키 주입
     bool         _cuasMode;     // 이 문맥은 조합이 매 글자 종료됨 → 키 주입 사용
     std::wstring _cuasDoc;      // 문서에 들어가 있는 현재 미리편집 글자(다음에 지울 분량)
+    int          _pendingBack;  // 우리가 쏜(무시할) 합성 백스페이스 수
 
     ITfCompartment* _pConvMode;          // 변환모드 칸
     DWORD           _dwConvModeCookie;
