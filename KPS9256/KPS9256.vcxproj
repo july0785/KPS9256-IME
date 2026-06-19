@@ -106,6 +106,8 @@
     <None Include="KPS9256.def" />
     <None Include="jo.ico" />
     <None Include="eng.ico" />
+    <None Include="jo_dark.ico" />
+    <None Include="eng_dark.ico" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

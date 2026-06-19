@@ -75,12 +75,28 @@ STDMETHODIMP CLangBarButton::OnClick(TfLBIClick click, POINT /*pt*/, const RECT*
 STDMETHODIMP CLangBarButton::InitMenu(ITfMenu* /*pMenu*/)   { return E_NOTIMPL; }
 STDMETHODIMP CLangBarButton::OnMenuSelect(UINT /*wID*/)     { return E_NOTIMPL; }
 
+// 작업표시줄이 라이트 테마인가. 라이트면 검은선 아이콘, 다크면 흰색 아이콘을 쓴다.
+static bool SystemUsesLightTaskbar()
+{
+    DWORD val = 0, sz = sizeof(val);   // 값 없으면 다크(윈도 기본)로 본다
+    HKEY k = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+            0, KEY_READ, &k) == ERROR_SUCCESS) {
+        RegQueryValueExW(k, L"SystemUsesLightTheme", nullptr, nullptr, (LPBYTE)&val, &sz);
+        RegCloseKey(k);
+    }
+    return val != 0;
+}
+
 STDMETHODIMP CLangBarButton::GetIcon(HICON* phIcon)
 {
     if (!phIcon) return E_INVALIDARG;
-    bool han = _pTip && _pTip->LbIsHangul();
-    *phIcon = (HICON)LoadImageW(g_hInst, MAKEINTRESOURCEW(han ? IDI_MODE : IDI_MODE_ENG),
-                                IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+    bool han   = _pTip && _pTip->LbIsHangul();
+    bool light = SystemUsesLightTaskbar();
+    int id = han ? (light ? IDI_MODE     : IDI_MODE_DARK)
+                 : (light ? IDI_MODE_ENG : IDI_MODE_ENG_DARK);
+    *phIcon = (HICON)LoadImageW(g_hInst, MAKEINTRESOURCEW(id), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
     return *phIcon ? S_OK : E_FAIL;
 }
 
